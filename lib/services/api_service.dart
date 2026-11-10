@@ -218,4 +218,118 @@ class ApiService {
 
     return _checkResponse(response);
   }
+
+  static Future<Map<String, dynamic>> updateTaskStatus({
+    required String token,
+    required String taskId,
+    required String status,
+  }) async {
+    final response = await http.patch(
+      Uri.parse(
+        '$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/status',
+      ),
+      headers: _authHeaders(token),
+      body: jsonEncode({
+        'status': status,
+      }),
+    ).timeout(const Duration(seconds: 15));
+
+    return _checkResponse(response);
+  }
+
+  // ========== LẤY DANH SÁCH NGƯỜI DÙNG ==========
+
+  static Future<List<Map<String, dynamic>>> getUsers({
+    required String token,
+  }) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/users'),
+      headers: _authHeaders(token),
+    ).timeout(const Duration(seconds: 15));
+
+    final data = _checkResponse(response);
+
+    return (data['users'] as List)
+        .map((user) => Map<String, dynamic>.from(user as Map))
+        .toList();
+  }
+
+  // ========== LẤY DANH SÁCH CHIA SẺ ==========
+
+  static Future<List<Map<String, dynamic>>> getTaskShares({
+    required String token,
+    required String taskId,
+  }) async {
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/shares',
+      ),
+      headers: _authHeaders(token),
+    ).timeout(const Duration(seconds: 15));
+
+    final data = _checkResponse(response);
+
+    return (data['shares'] as List)
+        .map((share) => Map<String, dynamic>.from(share as Map))
+        .toList();
+  }
+
+  // ========== CHIA SẺ CÔNG VIỆC ==========
+
+  static Future<Map<String, dynamic>> shareTask({
+    required String token,
+    required String taskId,
+    required List<Map<String, dynamic>> shares,
+  }) async {
+    final response = await http.post(
+      Uri.parse(
+        '$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/shares',
+      ),
+      headers: _authHeaders(token),
+      body: jsonEncode({
+        'shares': shares,
+      }),
+    ).timeout(const Duration(seconds: 15));
+
+    return _checkResponse(response);
+  }
+
+  // ========== THAY ĐỔI QUYỀN CHIA SẺ ==========
+
+  static Future<Map<String, dynamic>> updateSharePermission({
+    required String token,
+    required String taskId,
+    required String shareId,
+    required String permission,
+  }) async {
+    final response = await http.patch(
+      Uri.parse(
+        '$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/shares/${Uri.encodeComponent(shareId)}',
+      ),
+      headers: _authHeaders(token),
+      body: jsonEncode({
+        'permission': permission,
+      }),
+    ).timeout(const Duration(seconds: 15));
+
+    return _checkResponse(response);
+  }
+
+  // ========== THU HỒI QUYỀN CHIA SẺ ==========
+
+  static Future<Map<String, dynamic>> revokeTaskShare({
+    required String token,
+    required String taskId,
+    required String shareId,
+  }) async {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/shares/${Uri.encodeComponent(shareId)}',
+      ),
+      headers: _authHeaders(token),
+    ).timeout(const Duration(seconds: 15));
+
+    return _checkResponse(response);
+  }
+
 }
