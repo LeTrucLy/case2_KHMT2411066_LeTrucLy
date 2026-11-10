@@ -59,6 +59,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
     return isTaskOwner(task) || task['canEdit'] == true;
   }
 
+  // Người được phân công có thể đổi trạng thái nếu Backend cho phép,
+  // dù họ không có quyền sửa tên/mô tả công việc.
+  bool canChangeTaskStatus(Map<String, dynamic> task) {
+    return isTaskOwner(task) || task['canChangeStatus'] == true;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -161,7 +167,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   // Chủ công việc và người được giao đều có thể đổi trạng thái.
   Future<void> changeTaskStatus(Map<String, dynamic> task) async {
     // Chặn thao tác ngay cả khi hàm được gọi từ nơi khác trong giao diện.
-    if (!canEditTask(task)) {
+    if (!canChangeTaskStatus(task)) {
       showMessage('Bạn không có quyền cập nhật trạng thái công việc');
       return;
     }
@@ -476,7 +482,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                               ),
                             ),
                           ),
-                          if (canEdit)
+                          if (canChangeTaskStatus(task))
                             IconButton(
                               tooltip: 'Cập nhật trạng thái',
                               icon: const Icon(
@@ -547,7 +553,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   String? usersError;
   List<Map<String, dynamic>> users = [];
   final Set<String> selectedAssigneeIds = <String>{};
+  String? primaryAssigneeId;
   bool assignmentsTouched = false;
+  bool primaryAssigneeTouched = false;
 
   // Giữ ID sau khi tạo thành công để nếu bước phân công lỗi,
   // bấm Lưu lại sẽ không tạo trùng công việc.
@@ -584,6 +592,15 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           : assignedTo?.toString();
       if (id != null && id.isNotEmpty) selectedAssigneeIds.add(id);
     }
+    final initialPrimary = widget.task?['primaryAssigneeId'];
+    final initialPrimaryId = initialPrimary is Map
+        ? initialPrimary['_id']?.toString()
+        : initialPrimary?.toString();
+    if (initialPrimaryId != null &&
+        selectedAssigneeIds.contains(initialPrimaryId)) {
+      primaryAssigneeId = initialPrimaryId;
+    }
+
     if (widget.canManageAssignees) {
       loadUsers();
     } else {
@@ -650,6 +667,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         selectedAssigneeIds.add(id);
       } else {
         selectedAssigneeIds.remove(id);
+        if (primaryAssigneeId == id) {
+          primaryAssigneeId = null;
+          primaryAssigneeTouched = true;
+        }
       }
       assignmentsTouched = true;
     });
@@ -657,6 +678,17 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
 
   Future<void> saveTask() async {
     if (isSaving || !formKey.currentState!.validate()) return;
+    if (widget.canManageAssignees &&
+        selectedAssigneeIds.isNotEmpty &&
+        (primaryAssigneeId == null ||
+            !selectedAssigneeIds.contains(primaryAssigneeId))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng chọn người phụ trách chính'),
+        ),
+      );
+      return;
+    }
     setState(() => isSaving = true);
 
     try {
@@ -699,10 +731,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
       }
       if (!isEditing) createdTaskId = savedId;
 
-      // Khi tạo mới: chỉ gọi API phân công nếu có chọn người.
-      // Khi sửa: chỉ gọi nếu danh sách phân công thực sự thay đổi.
+      // Gửi lại phân công khi danh sách hoặc người phụ trách chính thay đổi.
       final needAssign = isEditing
-          ? assignmentsTouched
+          ? (assignmentsTouched || primaryAssigneeTouched)
           : selectedAssigneeIds.isNotEmpty;
       if (widget.canManageAssignees && needAssign) {
         final assignResponse = await http.put(
@@ -711,7 +742,10 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                 '${Uri.encodeComponent(savedId)}/assignees',
           ),
           headers: headers,
-          body: jsonEncode({'userIds': selectedAssigneeIds.toList()}),
+          body: jsonEncode({
+            'userIds': selectedAssigneeIds.toList(),
+            'primaryAssigneeId': primaryAssigneeId,
+          }),
         ).timeout(const Duration(seconds: 15));
         final assignData = jsonDecode(assignResponse.body);
         if (assignResponse.statusCode < 200 ||
@@ -858,6 +892,57 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                                   : (checked) => toggleAssignee(id, checked ?? false),
                             );
                           }),
+                        if (!isLoadingUsers && usersError == null) ...[
+                          const SizedBox(height: 12),
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Người phụ trách chính',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          DropdownButtonFormField<String>(
+                            key: ValueKey(
+                              'primary-${primaryAssigneeId ?? 'none'}-'
+                                  '${selectedAssigneeIds.length}',
+                            ),
+                            initialValue: primaryAssigneeId,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              hintText: 'Chọn người phụ trách chính',
+                            ),
+                            items: selectedAssigneeIds.map((id) {
+                              String name = id;
+                              for (final user in users) {
+                                if (user['_id']?.toString() == id) {
+                                  name = user['fullName']?.toString() ?? id;
+                                  break;
+                                }
+                              }
+                              return DropdownMenuItem<String>(
+                                value: id,
+                                child: Text(name),
+                              );
+                            }).toList(),
+                            onChanged: isSaving || selectedAssigneeIds.isEmpty
+                                ? null
+                                : (id) {
+                              setState(() {
+                                primaryAssigneeId = id;
+                                primaryAssigneeTouched = true;
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Chỉ chọn một người trong danh sách đã phân công.',
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
                       ],
                     ),
                   ),

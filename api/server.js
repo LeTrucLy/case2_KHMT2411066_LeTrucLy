@@ -863,7 +863,7 @@ app.patch('/api/tasks/:id/status', authenticate, async (req, res) => {
 app.put('/api/tasks/:id/assignees', authenticate, async (req, res) => {
   try {
     const taskId = req.params.id;
-    const { userIds } = req.body || {};
+    const { userIds, primaryAssigneeId } = req.body || {};
 
     if (!mongoose.isValidObjectId(taskId)) {
       return res.status(400).json({
@@ -888,6 +888,7 @@ app.put('/api/tasks/:id/assignees', authenticate, async (req, res) => {
       userIds.map(id => id.toLowerCase())
     )];
 
+    // Chỉ chủ sở hữu được phân công hoặc đổi người phụ trách chính.
     const task = await Task.findOne({
       _id: taskId,
       owner: req.userId
@@ -909,29 +910,56 @@ app.put('/api/tasks/:id/assignees', authenticate, async (req, res) => {
       });
     }
 
-    task.assigneeIds = uniqueIds;
-    task.primaryAssigneeId = uniqueIds[0] || null;
+    // Khi không có người được giao, không được đặt người phụ trách chính.
+    // Khi có người được giao, lựa chọn phải nằm trong danh sách đó.
+    let primaryId = null;
+    if (uniqueIds.length === 0) {
+      if (primaryAssigneeId !== undefined && primaryAssigneeId !== null) {
+        return res.status(400).json({
+          message: 'Không thể chọn người phụ trách chính khi chưa phân công'
+        });
+      }
+    } else if (primaryAssigneeId !== undefined) {
+      if (
+        typeof primaryAssigneeId !== 'string' ||
+        !mongoose.isValidObjectId(primaryAssigneeId) ||
+        !uniqueIds.includes(primaryAssigneeId.toLowerCase())
+      ) {
+        return res.status(400).json({
+          message: 'Người phụ trách chính phải thuộc danh sách được phân công'
+        });
+      }
+      primaryId = primaryAssigneeId.toLowerCase();
+    } else {
+      // Tương thích phiên bản Flutter cũ chưa gửi primaryAssigneeId.
+      // Giữ người phụ trách hiện tại nếu họ vẫn được phân công.
+      const oldPrimary = String(task.primaryAssigneeId || '').toLowerCase();
+      primaryId = uniqueIds.includes(oldPrimary)
+        ? oldPrimary
+        : uniqueIds[0];
+    }
 
-    // Đồng bộ với trường cũ
-    task.assignedTo = uniqueIds[0] || null;
+    task.assigneeIds = uniqueIds;
+    task.primaryAssigneeId = primaryId;
+
+    // Đồng bộ trường cũ để các màn hình và API cũ vẫn đọc được.
+    task.assignedTo = primaryId;
 
     await task.save();
 
     return res.json({
       message: 'Giao công việc thành công',
-      task
+      task: withTaskPermissions(task, 'owner')
     });
-
   } catch (error) {
     console.error('Assign task error:', error.message);
-
     return res.status(500).json({
       message: 'Không thể giao công việc'
     });
   }
 });
 
- // ===== CHIA SẺ CÔNG VIỆC =====
+// ===== CHIA SẺ CÔNG VIỆC =====
  // Chỉ chủ công việc được quản lý chia sẻ
 
 async function checkTaskOwner(taskId, userId) {
@@ -1173,4 +1201,3 @@ async function startServer() {
 }
 
 startServer();
-
