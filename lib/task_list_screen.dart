@@ -5,6 +5,9 @@ import 'package:http/http.dart' as http;
 
 import 'services/api_service.dart';
 import 'task_detail_screen.dart';
+import 'task_statistics_screen.dart';
+import 'profile_screen.dart';
+import 'notification_screen.dart';
 
 class TaskListScreen extends StatefulWidget {
   final String token;
@@ -23,6 +26,19 @@ class _TaskListScreenState extends State<TaskListScreen> {
   String? errorMessage;
   List<Map<String, dynamic>> tasks = [];
   String? currentUserId;
+
+  // ===== TÌM KIẾM NÂNG CAO - BUỔI 3 =====
+  final TextEditingController searchController =
+  TextEditingController();
+
+  String searchKeyword = '';
+  String selectedStatus = 'all';
+  String selectedPriority = 'all';
+  String selectedScope = 'all';
+  String selectedSort = 'createdAt';
+  String selectedOrder = 'desc';
+  String selectedAssigneeId = '';
+
 
   // JWT chỉ dùng để ẩn/hiện nút trên giao diện.
   // Backend vẫn là nơi quyết định quyền truy cập thực sự.
@@ -46,12 +62,23 @@ class _TaskListScreenState extends State<TaskListScreen> {
     return value?.toString();
   }
 
+
   bool isTaskOwner(Map<String, dynamic> task) {
     final ownerId = objectIdOf(task['owner']);
-    return currentUserId != null &&
+
+    final isOwner = currentUserId != null &&
         ownerId != null &&
         ownerId == currentUserId;
+
+    debugPrint('===== KIEM TRA QUYEN =====');
+    debugPrint('Cong viec: ${task['title']}');
+    debugPrint('ID chu so huu: $ownerId');
+    debugPrint('ID dang nhap: $currentUserId');
+    debugPrint('Co phai chu so huu: $isOwner');
+
+    return isOwner;
   }
+
 
   // Backend trả về canEdit = true khi tài khoản có quyền sửa.
   // Không suy ra quyền sửa chỉ từ việc được phân công công việc.
@@ -72,6 +99,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
     loadTasks();
   }
 
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+
   Future<void> loadTasks() async {
     if (!mounted) return;
 
@@ -83,6 +117,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
     try {
       final result = await ApiService.getTasks(
         token: widget.token,
+        keyword: searchKeyword,
+        status: selectedStatus,
+        priority: selectedPriority,
+        scope: selectedScope,
+        assigneeId: selectedAssigneeId,
+        sortBy: selectedSort,
+        order: selectedOrder,
       );
 
       if (!mounted) return;
@@ -341,6 +382,109 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Future<void> showAdvancedFilters() async {
+    var priority = selectedPriority;
+    var scope = selectedScope;
+    var sort = selectedSort;
+    var order = selectedOrder;
+    var assignee = selectedAssigneeId;
+    List<Map<String, dynamic>> users = [];
+    try { users = await ApiService.getUsers(token: widget.token); }
+    catch (_) { /* Vẫn có thể lọc các trường khác. */ }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context, isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, updateSheet) => SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(20, 20, 20,
+              MediaQuery.of(sheetContext).viewInsets.bottom + 20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('Tìm kiếm nâng cao',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: priority, isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Mức độ ưu tiên'),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('Tất cả mức ưu tiên')),
+                  DropdownMenuItem(value: 'low', child: Text('Thấp')),
+                  DropdownMenuItem(value: 'medium', child: Text('Trung bình')),
+                  DropdownMenuItem(value: 'high', child: Text('Cao')),
+                ],
+                onChanged: (v) { if (v != null) updateSheet(() => priority = v); },
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: scope, isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Phạm vi công việc'),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('Tất cả công việc được xem')),
+                  DropdownMenuItem(value: 'created', child: Text('Do tôi tạo')),
+                  DropdownMenuItem(value: 'assigned', child: Text('Giao cho tôi')),
+                  DropdownMenuItem(value: 'shared', child: Text('Được chia sẻ')),
+                ],
+                onChanged: (v) { if (v != null) updateSheet(() => scope = v); },
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: assignee, isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Người phụ trách'),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('Tất cả người phụ trách')),
+                  ...users.map((u) => DropdownMenuItem<String>(
+                    value: u['_id'].toString(),
+                    child: Text(u['fullName']?.toString() ?? 'Người dùng'))),
+                ],
+                onChanged: (v) { if (v != null) updateSheet(() => assignee = v); },
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: sort, isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Sắp xếp theo'),
+                items: const [
+                  DropdownMenuItem(value: 'createdAt', child: Text('Thời gian tạo')),
+                  DropdownMenuItem(value: 'dueDate', child: Text('Hạn hoàn thành')),
+                  DropdownMenuItem(value: 'priority', child: Text('Mức độ ưu tiên')),
+                ],
+                onChanged: (v) { if (v != null) updateSheet(() => sort = v); },
+              ),
+              DropdownButtonFormField<String>(
+                initialValue: order,
+                decoration: const InputDecoration(labelText: 'Thứ tự'),
+                items: const [
+                  DropdownMenuItem(value: 'asc', child: Text('Tăng dần')),
+                  DropdownMenuItem(value: 'desc', child: Text('Giảm dần')),
+                ],
+                onChanged: (v) { if (v != null) updateSheet(() => order = v); },
+              ),
+              const SizedBox(height: 16),
+              SizedBox(width: double.infinity, child: FilledButton.icon(
+                icon: const Icon(Icons.check), label: const Text('Áp dụng bộ lọc'),
+                onPressed: () {
+                  setState(() {
+                    selectedPriority = priority;
+                    selectedScope = scope;
+                    selectedSort = sort;
+                    selectedOrder = order;
+                    selectedAssigneeId = assignee;
+                  });
+                  Navigator.pop(sheetContext);
+                  loadTasks();
+                },
+              )),
+              TextButton(onPressed: () {
+                setState(() {
+                  selectedPriority = 'all'; selectedScope = 'all';
+                  selectedSort = 'createdAt'; selectedOrder = 'desc';
+                  selectedAssigneeId = '';
+                });
+                Navigator.pop(sheetContext); loadTasks();
+              }, child: const Text('Xóa bộ lọc nâng cao')),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -352,11 +496,132 @@ class _TaskListScreenState extends State<TaskListScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'Hồ sơ cá nhân',
+            onPressed: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => ProfileScreen(token: widget.token))),
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            tooltip: 'Thông báo',
+            onPressed: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => NotificationScreen(token: widget.token))),
+          ),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Lọc nâng cao',
+            onPressed: showAdvancedFilters,
+          ),
+          IconButton(
+            icon: const Icon(Icons.bar_chart_rounded),
+            tooltip: 'Thống kê công việc',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TaskStatisticsScreen(token: widget.token),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Tải lại',
             onPressed: loadTasks,
           ),
         ],
+
+
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(150),
+          child: Container(
+            color: const Color(0xFFF5F8FF),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+            child: Column(
+              children: [
+                // Ô tìm kiếm theo tên
+                TextField(
+                  controller: searchController,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: 'Tìm kiếm tên công việc...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.arrow_forward),
+                      tooltip: 'Tìm kiếm',
+                      onPressed: () {
+                        setState(() {
+                          searchKeyword =
+                              searchController.text.trim();
+                        });
+                        loadTasks();
+                      },
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onSubmitted: (value) {
+                    setState(() {
+                      searchKeyword = value.trim();
+                    });
+                    loadTasks();
+                  },
+                ),
+
+                const SizedBox(height: 10),
+
+                // Bộ lọc trạng thái
+                DropdownButtonFormField<String>(
+                  initialValue: selectedStatus,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Lọc theo trạng thái',
+                    prefixIcon: const Icon(Icons.filter_list),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'all',
+                      child: Text('Tất cả trạng thái'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'pending',
+                      child: Text('Chờ thực hiện'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'in_progress',
+                      child: Text('Đang thực hiện'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'completed',
+                      child: Text('Hoàn thành'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+
+                    setState(() {
+                      selectedStatus = value;
+                    });
+
+                    loadTasks();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
 
       floatingActionButton: FloatingActionButton.extended(
@@ -398,12 +663,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
         child: ListView(
           physics:
           const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 160),
+          children: [
+            const SizedBox(height: 160),
             Center(
               child: Text(
-                'Chưa có công việc nào.\n'
-                    'Nhấn + để thêm công việc.',
+                searchKeyword.isNotEmpty || selectedStatus != 'all' ||
+                  selectedPriority != 'all' || selectedScope != 'all' ||
+                  selectedAssigneeId.isNotEmpty
+                  ? 'Không tìm thấy công việc phù hợp.\nHãy thử thay đổi bộ lọc.'
+                  : 'Chưa có công việc nào.\nNhấn + để thêm công việc.',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -548,6 +816,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
   late final TextEditingController descriptionController;
 
   String status = 'pending';
+  String priority = 'medium';
+  String? startDate;
+  String? dueDate;
   bool isSaving = false;
   bool isLoadingUsers = true;
   String? usersError;
@@ -577,6 +848,13 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     if (['pending', 'in_progress', 'completed'].contains(initialStatus)) {
       status = initialStatus;
     }
+
+    final existingPriority = widget.task?['priority']?.toString();
+    if (['low', 'medium', 'high'].contains(existingPriority)) {
+      priority = existingPriority!;
+    }
+    startDate = dateOnly(widget.task?['startDate']);
+    dueDate = dateOnly(widget.task?['dueDate']);
 
     final existingAssignees = widget.task?['assigneeIds'];
     if (existingAssignees is List) {
@@ -676,6 +954,30 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
     });
   }
 
+  String? dateOnly(dynamic value) {
+    if (value == null || value.toString().isEmpty) return null;
+    final parsed = DateTime.tryParse(value.toString());
+    if (parsed == null) return null;
+    return '${parsed.year.toString().padLeft(4, '0')}-'
+        '${parsed.month.toString().padLeft(2, '0')}-'
+        '${parsed.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> pickDate({required bool isStart}) async {
+    final current = isStart ? startDate : dueDate;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: DateTime.tryParse(current ?? '') ?? DateTime.now(),
+      firstDate: DateTime(2020), lastDate: DateTime(2100),
+    );
+    if (date != null && mounted) {
+      setState(() {
+        final value = dateOnly(date.toIso8601String());
+        if (isStart) { startDate = value; } else { dueDate = value; }
+      });
+    }
+  }
+
   Future<void> saveTask() async {
     if (isSaving || !formKey.currentState!.validate()) return;
     if (widget.canManageAssignees &&
@@ -687,6 +989,11 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
           content: Text('Vui lòng chọn người phụ trách chính'),
         ),
       );
+      return;
+    }
+    if (startDate != null && dueDate != null && startDate!.compareTo(dueDate!) > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ngày bắt đầu không được sau hạn hoàn thành')));
       return;
     }
     setState(() => isSaving = true);
@@ -710,6 +1017,9 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
         'title': titleController.text.trim(),
         'description': descriptionController.text.trim(),
         'status': status,
+        'priority': priority,
+        'startDate': startDate,
+        'dueDate': dueDate,
       });
 
       final response = await (shouldUpdate
@@ -840,6 +1150,34 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                   if (value != null) setState(() => status = value);
                 },
               ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: priority,
+                decoration: const InputDecoration(
+                  labelText: 'Mức độ ưu tiên', border: OutlineInputBorder()),
+                items: const [
+                  DropdownMenuItem(value: 'low', child: Text('Thấp')),
+                  DropdownMenuItem(value: 'medium', child: Text('Trung bình')),
+                  DropdownMenuItem(value: 'high', child: Text('Cao')),
+                ],
+                onChanged: isSaving ? null : (v) {
+                  if (v != null) setState(() => priority = v);
+                },
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => pickDate(isStart: true),
+                icon: const Icon(Icons.event),
+                label: Text(startDate == null ? 'Chọn ngày bắt đầu' : 'Bắt đầu: $startDate'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => pickDate(isStart: false),
+                icon: const Icon(Icons.event_available),
+                label: Text(dueDate == null ? 'Chọn hạn hoàn thành' : 'Hạn: $dueDate'),
+              ),
+              TextButton(onPressed: () => setState(() {
+                startDate = null; dueDate = null;
+              }), child: const Text('Xóa ngày đã chọn')),
               const SizedBox(height: 20),
               if (widget.canManageAssignees)
                 Card(
@@ -879,19 +1217,26 @@ class _TaskFormScreenState extends State<TaskFormScreen> {
                             child: Text('Chưa có tài khoản để phân công'),
                           )
                         else
+
                           ...users.map((user) {
                             final id = user['_id']?.toString() ?? '';
+                            final email = user['email']?.toString().trim() ?? '';
                             final name = user['fullName']?.toString() ?? 'Người dùng';
+
                             return CheckboxListTile(
                               contentPadding: EdgeInsets.zero,
                               dense: true,
-                              title: Text(name),
+                              title: Text(
+                                email.isNotEmpty ? email : name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                               value: selectedAssigneeIds.contains(id),
                               onChanged: isSaving || id.isEmpty
                                   ? null
                                   : (checked) => toggleAssignee(id, checked ?? false),
                             );
                           }),
+
                         if (!isLoadingUsers && usersError == null) ...[
                           const SizedBox(height: 12),
                           const Divider(),

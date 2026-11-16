@@ -84,13 +84,39 @@ class ApiService {
     return _checkResponse(response);
   }
 
-  // ============== DANH SÁCH CÔNG VIỆC ==============
 
+  // ===== DANH SÁCH + TÌM KIẾM NÂNG CAO =====
   static Future<List<Map<String, dynamic>>> getTasks({
     required String token,
+    String keyword = '',
+    String status = '',
+    String priority = '',
+    String scope = '',
+    String assigneeId = '',
+    String sortBy = 'createdAt',
+    String order = 'desc',
   }) async {
+    final queryParameters = <String, String>{};
+
+    if (keyword.trim().isNotEmpty) {
+      queryParameters['q'] = keyword.trim();
+    }
+
+    if (status.isNotEmpty && status != 'all') {
+      queryParameters['status'] = status;
+    }
+
+    if (priority.isNotEmpty && priority != 'all') queryParameters['priority'] = priority;
+    if (scope.isNotEmpty && scope != 'all') queryParameters['scope'] = scope;
+    if (assigneeId.isNotEmpty) queryParameters['assigneeId'] = assigneeId;
+    queryParameters['sortBy'] = sortBy;
+    queryParameters['order'] = order;
+
+    final uri = Uri.parse('$baseUrl/api/tasks')
+        .replace(queryParameters: queryParameters);
+
     final response = await http.get(
-      Uri.parse('$baseUrl/api/tasks'),
+      uri,
       headers: _authHeaders(token),
     ).timeout(const Duration(seconds: 15));
 
@@ -98,7 +124,11 @@ class ApiService {
 
     if (data['tasks'] is List) {
       return (data['tasks'] as List)
-          .map((task) => Map<String, dynamic>.from(task as Map))
+          .map(
+            (task) => Map<String, dynamic>.from(
+          task as Map,
+        ),
+      )
           .toList();
     }
 
@@ -328,6 +358,124 @@ class ApiService {
       ),
       headers: _authHeaders(token),
     ).timeout(const Duration(seconds: 15));
+
+    return _checkResponse(response);
+  }
+
+  // ===== CÁ NHÂN, THÔNG BÁO VÀ THỐNG KÊ =====
+  static Future<Map<String, dynamic>> getProfile(String token) async {
+    final response = await http.get(Uri.parse('$baseUrl/api/auth/me'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    return _checkResponse(response);
+  }
+
+  static Future<Map<String, dynamic>> updateProfile(String token, String name) async {
+    final response = await http.put(Uri.parse('$baseUrl/api/auth/me'),
+      headers: _authHeaders(token), body: jsonEncode({'fullName': name.trim()}))
+      .timeout(const Duration(seconds: 15));
+    return _checkResponse(response);
+  }
+
+  static Future<Map<String, dynamic>> changePassword(
+    String token, String oldPassword, String newPassword) async {
+    final response = await http.put(Uri.parse('$baseUrl/api/auth/change-password'),
+      headers: _authHeaders(token),
+      body: jsonEncode({'oldPassword': oldPassword, 'newPassword': newPassword}))
+      .timeout(const Duration(seconds: 15));
+    return _checkResponse(response);
+  }
+
+  static Future<List<Map<String, dynamic>>> getNotifications(String token) async {
+    final response = await http.get(Uri.parse('$baseUrl/api/notifications'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    final data = _checkResponse(response);
+    return (data['notifications'] as List)
+      .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<void> readNotification(String token, String id) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/api/notifications/${Uri.encodeComponent(id)}/read'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    _checkResponse(response);
+  }
+
+  static Future<void> readAllNotifications(String token) async {
+    final response = await http.patch(Uri.parse('$baseUrl/api/notifications/read-all'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    _checkResponse(response);
+  }
+
+  static Future<Map<String, dynamic>> getStatistics(String token, String type) async {
+    if (!['tasks', 'assignments', 'deadlines'].contains(type)) {
+      throw ArgumentError('Loại thống kê không hợp lệ');
+    }
+    final response = await http.get(Uri.parse('$baseUrl/api/statistics/$type'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    return _checkResponse(response);
+  }
+
+  static Future<List<Map<String, dynamic>>> getActivities(
+    String token, String taskId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/activities'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    final data = _checkResponse(response);
+    return (data['activities'] as List)
+      .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<List<Map<String, dynamic>>> getEmailLogs(
+    String token, String taskId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/tasks/${Uri.encodeComponent(taskId)}/email-logs'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 15));
+    final data = _checkResponse(response);
+    return (data['logs'] as List)
+      .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  static Future<void> retryEmail(String token, String logId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/email-logs/${Uri.encodeComponent(logId)}/retry'),
+      headers: _authHeaders(token)).timeout(const Duration(seconds: 20));
+    _checkResponse(response);
+  }
+
+  // ===== GỬI MÃ QUÊN MẬT KHẨU =====
+  static Future<Map<String, dynamic>> forgotPassword({
+    required String email,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/forgot-password'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'email': email.trim().toLowerCase(),
+      }),
+    ).timeout(const Duration(seconds: 20));
+
+    return _checkResponse(response);
+  }
+
+  // ===== XÁC MINH MÃ VÀ ĐẶT LẠI MẬT KHẨU =====
+  static Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String resetCode,
+    required String newPassword,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/reset-password'),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'email': email.trim().toLowerCase(),
+        'resetCode': resetCode.trim(),
+        'newPassword': newPassword,
+      }),
+    ).timeout(const Duration(seconds: 20));
 
     return _checkResponse(response);
   }

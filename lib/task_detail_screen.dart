@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'services/api_service.dart';
+import 'task_history_screen.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final Map<String, dynamic> task;
@@ -103,7 +104,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     for (final user in data['users'] as List) {
       if (user is Map) {
         final id = extractUserId(user);
-        final name = user['fullName']?.toString();
+        final name = user['email']?.toString();
 
         if (id != null &&
             id.isNotEmpty &&
@@ -365,6 +366,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
                     const SizedBox(height: 24),
 
+                    buildSectionTitle('Mức độ ưu tiên'),
+                    const SizedBox(height: 8),
+                    Text({'low': 'Thấp', 'medium': 'Trung bình', 'high': 'Cao'}[
+                      taskDetail['priority']?.toString()] ?? 'Trung bình'),
+                    const SizedBox(height: 16),
+                    buildSectionTitle('Thời gian'),
+                    const SizedBox(height: 8),
+                    Text('Bắt đầu: ${taskDetail['startDate'] == null ? 'Chưa chọn' : taskDetail['startDate'].toString().substring(0, 10)}'),
+                    Text('Hạn hoàn thành: ${taskDetail['dueDate'] == null ? 'Chưa chọn' : taskDetail['dueDate'].toString().substring(0, 10)}'),
+                    const SizedBox(height: 24),
                     buildSectionTitle(
                       'Người được phân công',
                     ),
@@ -417,6 +428,19 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       ),
                   ],
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.history),
+                label: const Text('Lịch sử hoạt động và email'),
+                onPressed: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => TaskHistoryScreen(
+                    token: widget.token,
+                    taskId: taskDetail['_id']?.toString() ?? '',
+                    canViewEmailLogs: canManageShares,
+                  ))),
               ),
             ),
             if (canManageShares) ...[
@@ -473,6 +497,8 @@ class _TaskShareManagementScreenState
   bool isSaving = false;
   String? errorMessage;
   String? selectedUserId;
+  // Đổi key để ô chọn không giữ email đã chia sẻ sau khi mở hộp thoại.
+  int userDropdownVersion = 0;
   String selectedPermission = 'viewer';
   List<Map<String, dynamic>> users = [];
   List<Map<String, dynamic>> shares = [];
@@ -550,6 +576,7 @@ class _TaskShareManagementScreenState
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
         selectedUserId = null;
+        userDropdownVersion++;
         isLoading = false;
       });
     } catch (error) {
@@ -605,6 +632,79 @@ class _TaskShareManagementScreenState
     }
   }
 
+  // Bấm email đã chia sẻ để mở hộp thoại thay đổi quyền.
+  Future<void> showEditPermissionDialog(Map<String, dynamic> share) async {
+    if (isSaving || !mounted) return;
+
+    final shareId = share['_id']?.toString();
+    if (shareId == null || shareId.isEmpty) {
+      notify('Không tìm thấy mã quyền chia sẻ');
+      return;
+    }
+
+    final currentPermission =
+        share['permission']?.toString() == 'editor' ? 'editor' : 'viewer';
+    final email = share['userId'] is Map
+        ? (share['userId']['email']?.toString() ?? 'Người dùng')
+        : 'Người dùng';
+    String newPermission = currentPermission;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Chỉnh sửa quyền truy cập'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(email, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: newPermission,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Quyền truy cập',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'viewer',
+                    child: Text('Chỉ xem'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'editor',
+                    child: Text('Được sửa'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => newPermission = value);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Hủy'),
+            ),
+            ElevatedButton(
+              onPressed: newPermission == currentPermission
+                  ? null
+                  : () => Navigator.pop(dialogContext, newPermission),
+              child: const Text('Lưu quyền'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+    await updatePermission(shareId, result);
+  }
+
   Future<void> revokeShare(String shareId) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -642,12 +742,16 @@ class _TaskShareManagementScreenState
         .map((share) => userIdOf(share['userId']))
         .whereType<String>()
         .toSet();
+
     final candidates = users.where((user) {
-      final id = userIdOf(user);
-      return id != null &&
-          id != widget.ownerId &&
-          !sharedUserIds.contains(id);
+      return userIdOf(user) != null;
     }).toList();
+
+    final canSelectUser = candidates.any((user) {
+      final id = userIdOf(user)!;
+      return id != widget.ownerId;
+    });
+
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FF),
@@ -708,6 +812,7 @@ class _TaskShareManagementScreenState
                   ),
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
+                    key: ValueKey(userDropdownVersion),
                     initialValue: selectedUserId,
                     isExpanded: true,
                     decoration: const InputDecoration(
@@ -717,21 +822,54 @@ class _TaskShareManagementScreenState
                     hint: Text(candidates.isEmpty
                         ? 'Không còn tài khoản để chia sẻ'
                         : 'Chọn người nhận'),
+
                     items: candidates.map((user) {
                       final id = userIdOf(user)!;
+                      final isOwner = id == widget.ownerId;
+                      final alreadyShared = sharedUserIds.contains(id);
+
+                      final email = user['email']?.toString() ?? id;
+
+                      final label = isOwner
+                          ? '$email (Chủ công việc)'
+                          : alreadyShared
+                          ? '$email (Đã chia sẻ)'
+                          : email;
+
                       return DropdownMenuItem<String>(
                         value: id,
+                        enabled: !isOwner,
                         child: Text(
-                          user['fullName']?.toString() ?? id,
+                          label,
                           overflow: TextOverflow.ellipsis,
                         ),
                       );
                     }).toList(),
-                    onChanged: isSaving || candidates.isEmpty
+
+                    onChanged: isSaving || !canSelectUser
                         ? null
-                        : (value) => setState(() {
-                      selectedUserId = value;
-                    }),
+                        : (value) async {
+                            if (value == null) return;
+
+                            final matchingShares = shares.where(
+                              (share) => userIdOf(share['userId']) == value,
+                            ).toList();
+
+                            if (matchingShares.isNotEmpty) {
+                              // Không cho chia sẻ trùng: mở chỉnh sửa quyền.
+                              setState(() {
+                                selectedUserId = null;
+                                userDropdownVersion++;
+                              });
+                              await showEditPermissionDialog(matchingShares.first);
+                            } else {
+                              // Tài khoản mới: tiếp tục chọn quyền và chia sẻ.
+                              setState(() {
+                                selectedUserId = value;
+                                userDropdownVersion++;
+                              });
+                            }
+                          },
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -789,13 +927,13 @@ class _TaskShareManagementScreenState
             Card(
               color: Colors.white,
               child: ListTile(
+                onTap: isSaving ? null : () => showEditPermissionDialog(share),
                 leading: const CircleAvatar(
                   child: Icon(Icons.person_outline),
                 ),
                 title: Text(
                   share['userId'] is Map
-                      ? (share['userId']['fullName']?.toString() ??
-                      'Người dùng')
+                      ? (share['userId']['email']?.toString() ?? 'Người dùng')
                       : 'Người dùng',
                 ),
                 subtitle: Text(permissionLabel(
